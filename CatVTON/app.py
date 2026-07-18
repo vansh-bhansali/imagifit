@@ -213,8 +213,8 @@ def submit_function(
     # Inference
     # try:
     result_image = pipeline(
-        prompt="high-quality fashion catalog photo, the person is wearing the reference clothing, perfectly fitted garment, detailed fabric texture, natural wrinkles and soft folds, preserving the exact face, identity, facial features, and body structure of the original person, photorealistic, highly detailed, 8k resolution, professional studio lighting, realistic shadows, seamless blend, commercial fashion photography style",
-        negative_prompt="changing the face of the person, altering the body shape, body transformation, deformed body structure, deformed clothing, warped patterns, misaligned fabric, logo duplication, generic clothing, drawing, painting, illustration, low quality, worst quality, lowres, blurry, watermark, signature, text, double sleeves, extra limbs, bad shadows, harsh lighting",
+        prompt="photorealistic high-quality fashion catalog photo of the clothing, highly detailed fabric texture, realistic shadows and soft folds, perfectly fitted garment, seamless blending",
+        negative_prompt="deformed clothing, warped patterns, generic design, lowres, blurry, bad anatomy",
         image=person_image,
         mask_image=mask,
         ip_adapter_image=cloth_image,
@@ -232,11 +232,16 @@ def submit_function(
         torch.mps.empty_cache()
     
     # Post-process
+    # Composite the generated result back onto the original person image to guarantee
+    # that all unmasked areas (face, hands, background, body shape) remain 100% identical.
+    mask_gray = mask.convert("L")
+    final_image = Image.composite(result_image, person_image, mask_gray)
+
     masked_person = vis_mask(person_image, mask)
-    save_result_image = image_grid([person_image, masked_person, cloth_image, result_image], 1, 4)
+    save_result_image = image_grid([person_image, masked_person, cloth_image, final_image], 1, 4)
     save_result_image.save(result_save_path)
     if show_type == "result only":
-        return result_image
+        return final_image
     else:
         width, height = person_image.size
         if show_type == "input & result":
@@ -248,7 +253,7 @@ def submit_function(
         conditions = conditions.resize((condition_width, height), Image.NEAREST)
         new_result_image = Image.new("RGB", (width + condition_width + 5, height))
         new_result_image.paste(conditions, (0, 0))
-        new_result_image.paste(result_image, (condition_width + 5, 0))
+        new_result_image.paste(final_image, (condition_width + 5, 0))
     return new_result_image
 
 
