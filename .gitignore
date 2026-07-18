@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Stale files and configs
+.DS_Store
+.vscode/
+.idea/
+.claude/
+
+# CatVTON specifically
+CatVTON/output/
+CatVTON/app.log
+CatVTON/densepose_/
+CatVTON/Models/
+CatVTON/Datasets/
+CatVTON/resource/demo/output/
+CatVTON/playground.py
+
+# Env files
+.env
+.env.local
+.env.*.local
