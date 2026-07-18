@@ -213,8 +213,8 @@ def submit_function(
     # Inference
     # try:
     result_image = pipeline(
-        prompt="photorealistic, highly detailed, high quality clothing",
-        negative_prompt="monochrome, lowres, bad anatomy, worst quality, low quality, deformed, blurry",
+        prompt="high-quality fashion catalog photo, the person is wearing the reference clothing, perfectly fitted garment, detailed fabric texture, natural wrinkles and soft folds, preserving the exact face, identity, facial features, and body structure of the original person, photorealistic, highly detailed, 8k resolution, professional studio lighting, realistic shadows, seamless blend, commercial fashion photography style",
+        negative_prompt="changing the face of the person, altering the body shape, body transformation, deformed body structure, deformed clothing, warped patterns, misaligned fabric, logo duplication, generic clothing, drawing, painting, illustration, low quality, worst quality, lowres, blurry, watermark, signature, text, double sleeves, extra limbs, bad shadows, harsh lighting",
         image=person_image,
         mask_image=mask,
         ip_adapter_image=cloth_image,
