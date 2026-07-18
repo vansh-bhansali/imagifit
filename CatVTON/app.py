@@ -208,6 +208,7 @@ def submit_function(
             person_image,
             cloth_type
         )['mask']
+        mask = resize_and_crop(mask, (args.width, args.height))
     mask = mask_processor.blur(mask, blur_factor=9)
 
     # Inference
