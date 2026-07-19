@@ -84,6 +84,16 @@ Living document for this project. Issues/fixes are a log of what's already been 
   - *Update*: Increased the webhook delivery retry logic from 3 attempts to 10 attempts (with 2-second delays) to provide more resilience against transient network drops.
   - *Update*: Added a `cleanup_old_files()` routine that runs automatically on every `/process` request. It safely deletes files in `received_images/` older than 5 minutes to prevent the folder from filling up the hard drive, while ensuring concurrent client downloads aren't interrupted.
 
+### 12. Replaced SD-inpaint + IP-Adapter with the real CatVTON pipeline (quality fix)
+- **Problem**: try-on quality was poor and unfixable by prompting. Root cause was architectural: IP-Adapter transfers the garment's *style*, never the exact garment (prints/logos/cut can't survive). The giant "system prompt" added to the SD call was also ~95% ignored — CLIP truncates text conditioning at 77 tokens.
+- **Fix**: swapped `app.py` back to `CatVTONPipeline` (`model/pipeline.py`) — the purpose-trained try-on model whose weights were already being downloaded via `snapshot_download("zhengchong/CatVTON")` but only used for DensePose/SCHP. The garment image is now injected as a concatenated latent (true garment transfer, no text prompts — cross-attention is skipped entirely).
+- **Key wiring details**:
+  - `attn_ckpt_version="mix"` → loads `mix-48k-1024/attention/model.safetensors` (already in HF cache; no new downloads).
+  - Must pass `height=args.height, width=args.width` to the pipeline call — its own defaults are 768×1024 and would OOM on MPS.
+  - Memory settings restored per #2/#7: `pipeline.unet.set_attention_slice("auto")` + VAE slicing/tiling + `skip_safety_check=True`; `use_tf32=False` (CUDA-only knob).
+  - Removed: IP-Adapter loading, CLIP image encoder, prompts. All Flask/webhook/lock/base64 plumbing unchanged.
+- **Note**: the pipeline loads its VAE from `stabilityai/sd-vae-ft-mse` (cached) and the CatVTON pipeline internally re-runs `resize_and_crop`/`resize_and_padding` in `check_inputs` — harmless since inputs are already sized.
+
 ### Debugging notes / gotchas hit along the way
 - Background process output is fully buffered when redirected to a file — always launch with `python -u` or you won't see logs until the process exits.
 - When a background process silently dies, `ps aux | grep` returning nothing is the tell — don't assume "still downloading" just because the last known state was mid-download.

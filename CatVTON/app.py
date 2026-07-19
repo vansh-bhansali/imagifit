@@ -140,8 +140,8 @@ image_encoder = CLIPVisionModelWithProjection.from_pretrained(
 ).to(device)
 
 pipeline.load_ip_adapter(
-    ip_adapter_dir, 
-    subfolder="models", 
+    ip_adapter_dir,
+    subfolder="models",
     weight_name="ip-adapter_sd15.bin",
     image_encoder=image_encoder,
     local_files_only=True,
@@ -152,6 +152,11 @@ pipeline.set_ip_adapter_scale(0.7)
 # cost of slightly slower decode — needed to fit in 18GB unified memory.
 pipeline.vae.enable_slicing()
 pipeline.vae.enable_tiling()
+# NOTE: do NOT add pipeline.enable_attention_slicing() here. It replaces every
+# attention processor with SlicedAttnProcessor, destroying the IPAdapterAttnProcessor
+# that load_ip_adapter installed — generation then crashes at step 0 with
+# "'tuple' object has no attribute 'shape'". Torch 2.x SDPA is memory-efficient
+# without it. (Verified by direct test 2026-07-19.)
 # AutoMasker
 mask_processor = VaeImageProcessor(vae_scale_factor=8, do_normalize=False, do_binarize=True, do_convert_grayscale=True)
 automasker = AutoMasker(
@@ -330,9 +335,9 @@ def register_webhook():
     print(f"🔗 Registered Client Webhook: {CLIENT_WEBHOOK_URL}")
     return jsonify({"success": True, "message": "Webhook registered successfully"})
 
-def process_and_send(client_path, clothing_path, clothing_id, job_id, webhook_url):
+def process_and_send(client_path, clothing_path, clothing_id, cloth_type, job_id):
     try:
-        print(f"⏳ Running AI generation for {job_id} in background...")
+        print(f"⏳ Running AI generation for {job_id} in background (type: upper)...")
         result_img = submit_function(
             client_path, clothing_path,
             "upper", 50, 2.5, 42, "result only"
@@ -342,51 +347,56 @@ def process_and_send(client_path, clothing_path, clothing_id, job_id, webhook_ur
         final_save_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, f"result_{date_str}.png"))
         result_img.save(final_save_path)
         
-        if webhook_url:
-            import requests
-            print(f"📤 Sending result for {job_id} to {webhook_url}...")
+        import requests
+        delivered = False
+        for attempt in range(1, 11):
+            # Fetch the webhook URL dynamically! If the client restarts their tunnel mid-generation,
+            # this ensures we send it to their NEW tunnel url, not the dead one.
+            current_webhook = CLIENT_WEBHOOK_URL
+            
+            if not current_webhook:
+                print(f"⚠️ No webhook registered! Result saved locally at {final_save_path}")
+                return
+                
+            print(f"📤 Sending result for {job_id} to {current_webhook} (attempt {attempt}/10)...")
             image_name = os.path.basename(final_save_path)
             payload = {
                 "job_id": job_id,
                 "clothing_id": clothing_id,
                 "success": True,
                 "generatedImageName": image_name,
-                # Full URLs so the client never has to reconstruct them (the
-                # tunnel subdomain is not guaranteed — see PUBLIC_TUNNEL_URL).
                 "generatedImageUrl": f"{PUBLIC_TUNNEL_URL}/images/{image_name}" if PUBLIC_TUNNEL_URL else None,
                 "generatedImageLocalUrl": f"http://127.0.0.1:5050/images/{image_name}",
             }
-            # Free localtunnel connections drop silently, so retry delivery.
-            # NOTE: HTTP 408 here means localtunnel's proxy gave up waiting for
-            # the CLIENT's server to respond — the webhook was NOT delivered.
-            delivered = False
-            for attempt in range(1, 11):
-                try:
-                    response = requests.post(
-                        webhook_url,
-                        json=payload,
-                        headers={'Bypass-Tunnel-Reminder': 'true'},
-                        timeout=30
-                    )
-                    if 200 <= response.status_code < 300:
-                        print(f"✅ Webhook delivered for {job_id} (attempt {attempt}, HTTP {response.status_code})")
-                        delivered = True
-                        break
-                    print(f"⚠️ Webhook attempt {attempt}/10 got HTTP {response.status_code} — "
-                          f"client did not accept it. Body: {response.text[:200]!r}")
-                except Exception as req_e:
-                    print(f"❌ Webhook attempt {attempt}/10 failed: {req_e}")
-                time.sleep(2)
-            if not delivered:
-                print(f"❌ Webhook delivery FAILED for {job_id} after 10 attempts. "
-                      f"Result is still available at {payload['generatedImageLocalUrl']} "
-                      f"(and {payload['generatedImageUrl']} via tunnel).")
-        else:
-            print(f"⚠️ No webhook registered! Result saved locally at {final_save_path}")
+            try:
+                response = requests.post(
+                    current_webhook,
+                    json=payload,
+                    headers={
+                        'Bypass-Tunnel-Reminder': 'true',
+                        'User-Agent': 'Imagifit-Server/1.0'
+                    },
+                    timeout=30
+                )
+                if 200 <= response.status_code < 300:
+                    print(f"✅ Webhook delivered for {job_id} (attempt {attempt}, HTTP {response.status_code})")
+                    delivered = True
+                    break
+                print(f"⚠️ Webhook attempt {attempt}/10 got HTTP {response.status_code} — "
+                      f"client did not accept it. Body: {response.text[:200]!r}")
+            except Exception as req_e:
+                print(f"❌ Webhook attempt {attempt}/10 failed: {req_e}")
+            time.sleep(2)
+            
+        if not delivered:
+            print(f"❌ Webhook delivery FAILED for {job_id} after 10 attempts. "
+                  f"Result is still available at {payload['generatedImageLocalUrl']} "
+                  f"(and {payload['generatedImageUrl']} via tunnel).")
 
     except Exception as e:
         print(f"❌ Error during generation for {job_id}: {e}")
-        if webhook_url:
+        current_webhook = CLIENT_WEBHOOK_URL
+        if current_webhook:
             import requests
             payload = {
                 "job_id": job_id,
@@ -396,9 +406,12 @@ def process_and_send(client_path, clothing_path, clothing_id, job_id, webhook_ur
             }
             try:
                 requests.post(
-                    webhook_url, 
+                    current_webhook, 
                     json=payload, 
-                    headers={'Bypass-Tunnel-Reminder': 'true'},
+                    headers={
+                        'Bypass-Tunnel-Reminder': 'true',
+                        'User-Agent': 'Imagifit-Server/1.0'
+                    },
                     timeout=10
                 )
             except:
@@ -433,6 +446,7 @@ def process_image():
     client_image = request.files['clientImage']
     clothing_image = request.files['clothingImage']
     clothing_id = request.form.get('clothingId', 'unknown_clothing')
+    cloth_type = request.form.get('clothType', 'upper')
 
     if client_image.filename == '' or clothing_image.filename == '':
         return jsonify({"error": "Empty filename for one of the images"}), 400
@@ -454,10 +468,10 @@ def process_image():
     print(f"✅ Received Clothing Image: {clothing_filename} (ID: {clothing_id})")
     
     # Spawn background thread and return immediately
-    print(f"🔄 Spawning background generation for {job_id}...")
+    print(f"🔄 Spawning background generation for {job_id} (type: {cloth_type})...")
     threading.Thread(
         target=process_and_send, 
-        args=(client_save_path, clothing_save_path, clothing_id, job_id, CLIENT_WEBHOOK_URL)
+        args=(client_save_path, clothing_save_path, clothing_id, cloth_type, job_id)
     ).start()
 
     return jsonify({

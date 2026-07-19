@@ -1,0 +1,56 @@
+Fetching 12 files:   0%|          | 0/12 [00:00<?, ?it/s]Fetching 12 files: 100%|██████████| 12/12 [00:00<00:00, 127421.89it/s]
+Loading pipeline components...:   0%|          | 0/6 [00:00<?, ?it/s]An error occurred while trying to fetch /Users/vanshvikasbhansali/.cache/huggingface/hub/models--booksforcharlie--stable-diffusion-inpainting/snapshots/d260cf3646fe94c6d5d70820b77512f836d7cce2/vae: Error no file named diffusion_pytorch_model.safetensors found in directory /Users/vanshvikasbhansali/.cache/huggingface/hub/models--booksforcharlie--stable-diffusion-inpainting/snapshots/d260cf3646fe94c6d5d70820b77512f836d7cce2/vae.
+Defaulting to unsafe serialization. Pass `allow_pickle=False` to raise an error instead.
+Loading pipeline components...:  17%|█▋        | 1/6 [00:00<00:00,  6.79it/s]An error occurred while trying to fetch /Users/vanshvikasbhansali/.cache/huggingface/hub/models--booksforcharlie--stable-diffusion-inpainting/snapshots/d260cf3646fe94c6d5d70820b77512f836d7cce2/unet: Error no file named diffusion_pytorch_model.safetensors found in directory /Users/vanshvikasbhansali/.cache/huggingface/hub/models--booksforcharlie--stable-diffusion-inpainting/snapshots/d260cf3646fe94c6d5d70820b77512f836d7cce2/unet.
+Defaulting to unsafe serialization. Pass `allow_pickle=False` to raise an error instead.
+Loading pipeline components...:  50%|█████     | 3/6 [00:02<00:02,  1.16it/s]/opt/homebrew/Caskroom/miniconda/base/envs/catvton/lib/python3.10/site-packages/transformers/models/clip/feature_extraction_clip.py:28: FutureWarning: The class CLIPFeatureExtractor is deprecated and will be removed in version 5 of Transformers. Please use CLIPImageProcessor instead.
+  warnings.warn(
+Loading pipeline components...:  83%|████████▎ | 5/6 [00:02<00:00,  1.72it/s]Loading pipeline components...: 100%|██████████| 6/6 [00:03<00:00,  2.00it/s]
+You have disabled the safety checker for <class 'diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint.StableDiffusionInpaintPipeline'> by passing `safety_checker=None`. Ensure that you abide to the conditions of the Stable Diffusion license and do not expose unfiltered results in services or applications open to the public. Both the diffusers team and Hugging Face strongly recommend to keep the safety filter enabled in all public facing circumstances, disabling it only for use-cases that involve analyzing network behavior or auditing its results. For more information, please have a look at https://github.com/huggingface/diffusers/pull/254 .
+/Users/vanshvikasbhansali/Desktop/imagifit/CatVTON/model/SCHP/__init__.py:98: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(ckpt_path, map_location='cpu')['state_dict']
+🔗 Restored client webhook from previous session: https://wise-peaches-find.loca.lt/webhook
+AI Server is listening on port 5050...
+🌍 Fetching public IP address for Localtunnel authorization password...
+ * Serving Flask app 'app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://10.16.48.167:5050
+[33mPress CTRL+C to quit[0m
+Running on local URL:  http://127.0.0.1:7860
+🔑 Your Localtunnel Password (Public IP): 118.185.228.210
+🚀 Starting localtunnel on port 5050...
+127.0.0.1 - - [19/Jul/2026 16:16:55] "[33mGET / HTTP/1.1[0m" 404 -
+
+--- New Request Received! ---
+Files received: ['clientImage', 'clothingImage']
+Form data received: ['clothingId', 'clothType']
+✅ Received Client Image: job_5068355d_model_5.png
+✅ Received Clothing Image: job_5068355d_24083449_54173465_2048.jpg (ID: sd_final_check2)
+🔄 Spawning background generation for job_5068355d (type: upper)...
+⏳ Running AI generation for job_5068355d in background (type: upper)...
+127.0.0.1 - - [19/Jul/2026 16:16:55] "[35m[1mPOST /process HTTP/1.1[0m" 202 -
+/opt/homebrew/Caskroom/miniconda/base/envs/catvton/lib/python3.10/site-packages/torch/functional.py:513: UserWarning: torch.meshgrid: in an upcoming release, it will be required to pass the indexing argument. (Triggered internally at /Users/runner/work/pytorch/pytorch/pytorch/aten/src/ATen/native/TensorShape.cpp:3610.)
+  return _VF.meshgrid(tensors, **kwargs)  # type: ignore[attr-defined]
+⚠️  WARNING: did NOT get the expected 'imagifit-api-server' subdomain (old tunnel likely still holds it). Clients hardcoding the URL will break!
+
+==================================================
+🌐 Public Tunnel URL: https://pretty-otter-38.loca.lt
+⚙️  API Endpoint:     https://pretty-otter-38.loca.lt/process
+🔑 Password/IP:       118.185.228.210
+==================================================
+
+Running on public URL: https://cec22fa447d836d5a7.gradio.live
+
+This share link expires in 72 hours. For free permanent hosting and GPU upgrades, run `gradio deploy` from Terminal to deploy to Spaces (https://huggingface.co/spaces)
+  0%|          | 0/50 [00:00<?, ?it/s]  2%|▏         | 1/50 [00:01<01:04,  1.32s/it]  4%|▍         | 2/50 [00:01<00:41,  1.15it/s]  6%|▌         | 3/50 [00:02<00:34,  1.35it/s]  8%|▊         | 4/50 [00:03<00:31,  1.48it/s] 10%|█         | 5/50 [00:03<00:28,  1.57it/s] 12%|█▏        | 6/50 [00:04<00:26,  1.64it/s] 14%|█▍        | 7/50 [00:04<00:25,  1.68it/s] 16%|█▌        | 8/50 [00:05<00:24,  1.70it/s] 18%|█▊        | 9/50 [00:05<00:23,  1.72it/s] 20%|██        | 10/50 [00:06<00:23,  1.73it/s] 22%|██▏       | 11/50 [00:07<00:22,  1.73it/s] 24%|██▍       | 12/50 [00:07<00:21,  1.75it/s] 26%|██▌       | 13/50 [00:08<00:20,  1.77it/s] 28%|██▊       | 14/50 [00:08<00:20,  1.78it/s] 30%|███       | 15/50 [00:09<00:19,  1.78it/s] 32%|███▏      | 16/50 [00:09<00:19,  1.77it/s] 34%|███▍      | 17/50 [00:10<00:18,  1.78it/s] 36%|███▌      | 18/50 [00:10<00:17,  1.80it/s] 38%|███▊      | 19/50 [00:11<00:17,  1.81it/s] 40%|████      | 20/50 [00:11<00:16,  1.83it/s] 42%|████▏     | 21/50 [00:12<00:15,  1.83it/s] 44%|████▍     | 22/50 [00:13<00:15,  1.83it/s] 46%|████▌     | 23/50 [00:13<00:14,  1.82it/s] 48%|████▊     | 24/50 [00:14<00:14,  1.81it/s] 50%|█████     | 25/50 [00:14<00:13,  1.80it/s] 52%|█████▏    | 26/50 [00:15<00:13,  1.80it/s] 54%|█████▍    | 27/50 [00:15<00:12,  1.81it/s] 56%|█████▌    | 28/50 [00:16<00:12,  1.82it/s] 58%|█████▊    | 29/50 [00:16<00:11,  1.82it/s] 60%|██████    | 30/50 [00:17<00:10,  1.82it/s] 62%|██████▏   | 31/50 [00:18<00:10,  1.82it/s] 64%|██████▍   | 32/50 [00:18<00:09,  1.82it/s] 66%|██████▌   | 33/50 [00:19<00:09,  1.82it/s] 68%|██████▊   | 34/50 [00:19<00:08,  1.82it/s] 70%|███████   | 35/50 [00:20<00:08,  1.81it/s] 72%|███████▏  | 36/50 [00:20<00:07,  1.79it/s] 74%|███████▍  | 37/50 [00:21<00:07,  1.78it/s] 76%|███████▌  | 38/50 [00:21<00:06,  1.77it/s] 78%|███████▊  | 39/50 [00:22<00:06,  1.76it/s] 80%|████████  | 40/50 [00:23<00:05,  1.76it/s] 82%|████████▏ | 41/50 [00:23<00:05,  1.76it/s] 84%|████████▍ | 42/50 [00:24<00:04,  1.75it/s] 86%|████████▌ | 43/50 [00:24<00:04,  1.75it/s] 88%|████████▊ | 44/50 [00:25<00:03,  1.75it/s] 90%|█████████ | 45/50 [00:25<00:02,  1.75it/s] 92%|█████████▏| 46/50 [00:26<00:02,  1.74it/s] 94%|█████████▍| 47/50 [00:27<00:01,  1.75it/s] 96%|█████████▌| 48/50 [00:27<00:01,  1.75it/s] 98%|█████████▊| 49/50 [00:28<00:00,  1.74it/s]100%|██████████| 50/50 [00:28<00:00,  1.75it/s]100%|██████████| 50/50 [00:28<00:00,  1.73it/s]
+📤 Sending result for job_5068355d to https://wise-peaches-find.loca.lt/webhook (attempt 1/10)...
+⚠️ Webhook attempt 1/10 got HTTP 408 — client did not accept it. Body: ''
+📤 Sending result for job_5068355d to https://wise-peaches-find.loca.lt/webhook (attempt 2/10)...
+⚠️ Webhook attempt 2/10 got HTTP 408 — client did not accept it. Body: ''
+📤 Sending result for job_5068355d to https://wise-peaches-find.loca.lt/webhook (attempt 3/10)...
+✅ Webhook delivered for job_5068355d (attempt 3, HTTP 200)
+/opt/homebrew/Caskroom/miniconda/base/envs/catvton/lib/python3.10/multiprocessing/resource_tracker.py:224: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
