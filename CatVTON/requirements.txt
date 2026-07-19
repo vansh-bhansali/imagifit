@@ -17,6 +17,12 @@ cloudpickle==3.0.0
 omegaconf==2.3.0
 pycocotools==2.0.8
 av==12.3.0
-gradio==4.41.0
+gradio==4.44.1
+flask==3.1.3
+flask-cors==6.0.5
+# Pinned explicitly: gradio needs the pre-1.0 starlette TemplateResponse signature,
+# which a fresh install would otherwise break by pulling the latest (see PROJECT_NOTES.md #5).
+fastapi==0.115.0
+starlette==0.38.6
 peft==0.11.1
 huggingface_hub>=0.34.0,<2.0

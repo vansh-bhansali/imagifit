@@ -1,16 +1,26 @@
 import argparse
+import base64
 import os
+import uuid
 from datetime import datetime
 
 import gradio as gr
 import gradio_client.utils as _gc_utils
 import numpy as np
 import torch
+import threading
+import urllib.request
+import subprocess
+import time
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+from werkzeug.utils import secure_filename
 
 # gradio_client's get_type()/_json_schema_to_python_type() assume every JSON-schema
 # node is a dict, but a bare `additionalProperties: true` node is a valid bool schema
-# and crashes both ("argument of type 'bool' is not iterable" / APIInfoParseError),
-# which breaks the app's root page on load.
+# and crashes both ("argument of type 'bool' is not iterable"), which 500s the
+# Gradio root page on every load (routes.py calls api_info() unconditionally).
+# Upstream bug in gradio_client==1.3.0 — see PROJECT_NOTES.md "Issues Fixed" #4.
 _original_get_type = _gc_utils.get_type
 def _patched_get_type(schema):
     if isinstance(schema, bool):
@@ -24,6 +34,7 @@ def _patched_json_schema_to_python_type(schema, defs):
         return "Any"
     return _original_json_schema_to_python_type(schema, defs)
 _gc_utils._json_schema_to_python_type = _patched_json_schema_to_python_type
+
 from diffusers.image_processor import VaeImageProcessor
 from huggingface_hub import snapshot_download
 from PIL import Image
@@ -77,20 +88,6 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--repaint", 
-        action="store_true", 
-        help="Whether to repaint the result image with the original background."
-    )
-    parser.add_argument(
-        "--allow_tf32",
-        action="store_true",
-        default=True,
-        help=(
-            "Whether or not to allow TF32 on Ampere GPUs. Can be used to speed up training. For more information, see"
-            " https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices"
-        ),
-    )
-    parser.add_argument(
         "--mixed_precision",
         type=str,
         default="bf16",
@@ -103,10 +100,6 @@ def parse_args():
     )
     
     args = parser.parse_args()
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
-
     return args
 
 def image_grid(imgs, rows, cols):
@@ -167,6 +160,11 @@ automasker = AutoMasker(
     device=device,
 )
 
+# Serialize generation: both the Flask thread and the Gradio worker call into
+# generation, and two concurrent diffusion runs would exhaust MPS memory.
+generation_lock = threading.Lock()
+
+
 def submit_function(
     person_image,
     cloth_image,
@@ -176,14 +174,40 @@ def submit_function(
     seed,
     show_type
 ):
-    person_image, mask = person_image["background"], person_image["layers"][0]
-    mask = Image.open(mask).convert("L")
-    if len(np.unique(np.array(mask))) == 1:
-        mask = None
+    with generation_lock:
+        return _generate_tryon(
+            person_image,
+            cloth_image,
+            cloth_type,
+            num_inference_steps,
+            guidance_scale,
+            seed,
+            show_type,
+        )
+
+
+def _generate_tryon(
+    person_image,
+    cloth_image,
+    cloth_type,
+    num_inference_steps,
+    guidance_scale,
+    seed,
+    show_type
+):
+    if isinstance(person_image, dict):
+        person_image_path, mask_path = person_image["background"], person_image["layers"][0]
+        mask = Image.open(mask_path).convert("L")
+        if len(np.unique(np.array(mask))) == 1:
+            mask = None
+        else:
+            mask = np.array(mask)
+            mask[mask > 0] = 255
+            mask = Image.fromarray(mask)
+        person_image = person_image_path
     else:
-        mask = np.array(mask)
-        mask[mask > 0] = 255
-        mask = Image.fromarray(mask)
+        # person_image is a string path from Flask webhook
+        mask = None
 
     tmp_folder = args.output_dir
     date_str = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -195,6 +219,10 @@ def submit_function(
     if seed != -1:
         generator = torch.Generator(device=device).manual_seed(seed)
 
+    if person_image is None:
+        raise gr.Error("Please provide a person image before submitting.")
+    if cloth_image is None:
+        raise gr.Error("Please provide a clothing image before submitting.")
     person_image = Image.open(person_image).convert("RGB")
     cloth_image = Image.open(cloth_image).convert("RGB")
     person_image = resize_and_crop(person_image, (args.width, args.height))
@@ -212,7 +240,6 @@ def submit_function(
     mask = mask_processor.blur(mask, blur_factor=9)
 
     # Inference
-    # try:
     result_image = pipeline(
         prompt="photorealistic high-quality fashion catalog photo of the clothing, highly detailed fabric texture, realistic shadows and soft folds, perfectly fitted garment, seamless blending",
         negative_prompt="deformed clothing, warped patterns, generic design, lowres, blurry, bad anatomy",
@@ -223,19 +250,18 @@ def submit_function(
         guidance_scale=guidance_scale,
         generator=generator
     ).images[0]
-    # except Exception as e:
-    #     raise gr.Error(
-    #         "An error occurred. Please try again later: {}".format(e)
-    #     )
+
     # MPS's caching allocator holds freed activation memory indefinitely,
     # so RSS keeps growing across generations unless we release it.
     if device == "mps":
         torch.mps.empty_cache()
     
-    # Post-process
-    # Composite the generated result back onto the original person image to guarantee
-    # that all unmasked areas (face, hands, background, body shape) remain 100% identical.
-    mask_gray = mask.convert("L")
+    # Post-process — ensure all images are exactly the same size before compositing.
+    # The SD pipeline VAE encode/decode round-trip and mask_processor.blur() can alter
+    # dimensions slightly, which would cause Image.composite to crash with a size mismatch.
+    person_size = person_image.size  # (width, height)
+    result_image = result_image.resize(person_size, Image.LANCZOS)
+    mask_gray = mask.convert("L").resize(person_size, Image.LANCZOS)
     final_image = Image.composite(result_image, person_image, mask_gray)
 
     masked_person = vis_mask(person_image, mask)
@@ -261,6 +287,214 @@ def submit_function(
 def person_example_fn(image_path):
     return image_path
 
+# --- Flask Server Integration ---
+flask_app = Flask(__name__)
+CORS(flask_app)  # Enable CORS for all routes so React can connect
+UPLOAD_FOLDER = 'received_images'
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+@flask_app.route('/images/<path:filename>')
+def serve_image(filename):
+    return send_from_directory(os.path.abspath(UPLOAD_FOLDER), filename)
+
+# Persist the registered webhook across server restarts, so the client doesn't
+# have to re-handshake every time this server relaunches. A stale URL is
+# harmless: delivery retries fail gracefully and the client re-registers.
+WEBHOOK_STATE_FILE = "registered_webhook.txt"
+CLIENT_WEBHOOK_URL = None
+if os.path.exists(WEBHOOK_STATE_FILE):
+    try:
+        CLIENT_WEBHOOK_URL = open(WEBHOOK_STATE_FILE).read().strip() or None
+        if CLIENT_WEBHOOK_URL:
+            print(f"🔗 Restored client webhook from previous session: {CLIENT_WEBHOOK_URL}")
+    except OSError:
+        pass
+# Set by start_tunnel() once localtunnel reports its URL. May be a random
+# subdomain if "imagifit-api-server" was still held by a dead tunnel, so the
+# client must never hardcode it — we send full image URLs in the webhook payload.
+PUBLIC_TUNNEL_URL = None
+
+@flask_app.route('/register', methods=['POST'])
+def register_webhook():
+    global CLIENT_WEBHOOK_URL
+    data = request.json
+    if not data or 'client_webhook_url' not in data:
+        return jsonify({"error": "Missing client_webhook_url"}), 400
+    CLIENT_WEBHOOK_URL = data['client_webhook_url']
+    try:
+        with open(WEBHOOK_STATE_FILE, "w") as f:
+            f.write(CLIENT_WEBHOOK_URL)
+    except OSError as e:
+        print(f"⚠️ Could not persist webhook URL: {e}")
+    print(f"🔗 Registered Client Webhook: {CLIENT_WEBHOOK_URL}")
+    return jsonify({"success": True, "message": "Webhook registered successfully"})
+
+def process_and_send(client_path, clothing_path, clothing_id, job_id, webhook_url):
+    try:
+        print(f"⏳ Running AI generation for {job_id} in background...")
+        result_img = submit_function(
+            client_path, clothing_path,
+            "upper", 50, 2.5, 42, "result only"
+        )
+        
+        date_str = time.strftime("%Y%m%d%H%M%S")
+        final_save_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, f"result_{date_str}.png"))
+        result_img.save(final_save_path)
+        
+        if webhook_url:
+            import requests
+            print(f"📤 Sending result for {job_id} to {webhook_url}...")
+            image_name = os.path.basename(final_save_path)
+            payload = {
+                "job_id": job_id,
+                "clothing_id": clothing_id,
+                "success": True,
+                "generatedImageName": image_name,
+                # Full URLs so the client never has to reconstruct them (the
+                # tunnel subdomain is not guaranteed — see PUBLIC_TUNNEL_URL).
+                "generatedImageUrl": f"{PUBLIC_TUNNEL_URL}/images/{image_name}" if PUBLIC_TUNNEL_URL else None,
+                "generatedImageLocalUrl": f"http://127.0.0.1:5050/images/{image_name}",
+            }
+            # Free localtunnel connections drop silently, so retry delivery.
+            # NOTE: HTTP 408 here means localtunnel's proxy gave up waiting for
+            # the CLIENT's server to respond — the webhook was NOT delivered.
+            delivered = False
+            for attempt in range(1, 11):
+                try:
+                    response = requests.post(
+                        webhook_url,
+                        json=payload,
+                        headers={'Bypass-Tunnel-Reminder': 'true'},
+                        timeout=30
+                    )
+                    if 200 <= response.status_code < 300:
+                        print(f"✅ Webhook delivered for {job_id} (attempt {attempt}, HTTP {response.status_code})")
+                        delivered = True
+                        break
+                    print(f"⚠️ Webhook attempt {attempt}/10 got HTTP {response.status_code} — "
+                          f"client did not accept it. Body: {response.text[:200]!r}")
+                except Exception as req_e:
+                    print(f"❌ Webhook attempt {attempt}/10 failed: {req_e}")
+                time.sleep(2)
+            if not delivered:
+                print(f"❌ Webhook delivery FAILED for {job_id} after 10 attempts. "
+                      f"Result is still available at {payload['generatedImageLocalUrl']} "
+                      f"(and {payload['generatedImageUrl']} via tunnel).")
+        else:
+            print(f"⚠️ No webhook registered! Result saved locally at {final_save_path}")
+
+    except Exception as e:
+        print(f"❌ Error during generation for {job_id}: {e}")
+        if webhook_url:
+            import requests
+            payload = {
+                "job_id": job_id,
+                "clothing_id": clothing_id,
+                "success": False,
+                "error": str(e)
+            }
+            try:
+                requests.post(
+                    webhook_url, 
+                    json=payload, 
+                    headers={'Bypass-Tunnel-Reminder': 'true'},
+                    timeout=10
+                )
+            except:
+                pass
+
+@flask_app.route('/process', methods=['POST'])
+def process_image():
+    print("\n--- New Request Received! ---")
+    print(f"Files received: {list(request.files.keys())}")
+    print(f"Form data received: {list(request.form.keys())}")
+    
+    if 'clientImage' not in request.files or 'clothingImage' not in request.files:
+        print("❌ Error: Missing clientImage or clothingImage! Returning 400 error.")
+        return jsonify({"error": "Missing clientImage or clothingImage in request"}), 400
+        
+    client_image = request.files['clientImage']
+    clothing_image = request.files['clothingImage']
+    clothing_id = request.form.get('clothingId', 'unknown_clothing')
+
+    if client_image.filename == '' or clothing_image.filename == '':
+        return jsonify({"error": "Empty filename for one of the images"}), 400
+
+    # Prefix with a unique job id so concurrent requests uploading files with
+    # the same name (e.g. "photo.jpg") don't overwrite each other mid-generation.
+    # secure_filename can also return "" for non-ASCII names, so fall back.
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+
+    client_filename = f"{job_id}_{secure_filename(client_image.filename) or 'client.png'}"
+    client_save_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, client_filename))
+    client_image.save(client_save_path)
+
+    clothing_filename = f"{job_id}_{secure_filename(clothing_image.filename) or 'clothing.png'}"
+    clothing_save_path = os.path.abspath(os.path.join(UPLOAD_FOLDER, clothing_filename))
+    clothing_image.save(clothing_save_path)
+    
+    print(f"✅ Received Client Image: {client_filename}")
+    print(f"✅ Received Clothing Image: {clothing_filename} (ID: {clothing_id})")
+    
+    # Spawn background thread and return immediately
+    print(f"🔄 Spawning background generation for {job_id}...")
+    threading.Thread(
+        target=process_and_send, 
+        args=(client_save_path, clothing_save_path, clothing_id, job_id, CLIENT_WEBHOOK_URL)
+    ).start()
+
+    return jsonify({
+        "success": True,
+        "message": "Processing started",
+        "job_id": job_id
+    }), 202
+
+def get_public_ip():
+    try:
+        url = 'https://ifconfig.me/ip'
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            return response.read().decode('utf-8').strip()
+    except Exception as e:
+        return f"Unable to fetch public IP: {e}"
+
+def start_tunnel():
+    global PUBLIC_TUNNEL_URL
+    print("🌍 Fetching public IP address for Localtunnel authorization password...")
+    public_ip = get_public_ip()
+    print(f"🔑 Your Localtunnel Password (Public IP): {public_ip}")
+    print("🚀 Starting localtunnel on port 5050...")
+    
+    try:
+        process = subprocess.Popen(
+            ['npx', '-y', 'localtunnel', '--port', '5050', '--subdomain', 'imagifit-api-server'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+        for line in process.stdout:
+            if "your url is:" in line:
+                url = line.strip().replace("your url is: ", "")
+                PUBLIC_TUNNEL_URL = url
+                if "imagifit-api-server" not in url:
+                    print("⚠️  WARNING: did NOT get the expected 'imagifit-api-server' subdomain "
+                          "(old tunnel likely still holds it). Clients hardcoding the URL will break!")
+                print("\n==================================================")
+                print(f"🌐 Public Tunnel URL: {url}")
+                print(f"⚙️  API Endpoint:     {url}/process")
+                print(f"🔑 Password/IP:       {public_ip}")
+                print("==================================================\n")
+            else:
+                print(f"[Tunnel] {line.strip()}")
+    except Exception as e:
+        print(f"❌ Failed to start localtunnel: {e}")
+
+def run_flask():
+    print("AI Server is listening on port 5050...")
+    flask_app.run(host='0.0.0.0', port=5050, debug=False, use_reloader=False)
+# --- End Flask Integration ---
+
 HEADER = """
 <h1 style="text-align: center;"> 👕 Stable Diffusion Inpainting + IP-Adapter Virtual Try-On </h1>
 <div style="text-align: center; color: #808080;">
@@ -272,6 +506,7 @@ HEADER = """
 def app_gradio():
     with gr.Blocks(title="Stable Diffusion Try-On") as demo:
         gr.Markdown(HEADER)
+        
         with gr.Row():
             with gr.Column(scale=1, min_width=350):
                 with gr.Row():
@@ -402,8 +637,14 @@ def app_gradio():
                 ],
                 result_image,
             )
+
     demo.queue().launch(share=True, show_error=True)
 
 
 if __name__ == "__main__":
+    # Start the Flask API and Localtunnel in background threads
+    threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(target=start_tunnel, daemon=True).start()
+    
+    # Start the Gradio UI on the main thread
     app_gradio()

@@ -57,6 +57,32 @@ Living document for this project. Issues/fixes are a log of what's already been 
   - Launch with `PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.6 PYTORCH_MPS_LOW_WATERMARK_RATIO=0.4` — caps MPS allocations at ~60% of RAM so a single generation can't starve the OS.
 - **If memory is still tight**: drop resolution below 384×512 (e.g. `--width 256 --height 384`) — quality degrades but memory scales roughly with pixel count. Swapping to a "smaller model" is not a real option in this space.
 
+### 8. "Images Do Not Match" Error during SD inpainting
+- **Problem**: The app crashed with `ValueError: images do not match` at `Image.composite(result_image, person_image, mask_gray)`. The root cause is a size mismatch: the `result_image` (output from SD Inpainting pipeline VAE) or the `mask_gray` (after VAE processing/blur) can be slightly different from the original `person_image` dimensions. `Image.composite` requires all three images to have the exact same size.
+- **Fix**: Added explicit `resize()` calls to both `result_image` and `mask_gray` to force them to match `person_image.size` using `Image.LANCZOS` resampling right before the composite step.
+
+### 9. API / Codebase Overengineering and Flask API flaws
+- **Problem**: The app used a convoluted Gradio-queue bridge (polling loops) for Flask to run jobs, which caused race conditions and infinite hangs. Flask also returned local file paths (e.g., `/Users/.../result.png`) which the frontend couldn't use.
+- **Fix**: 
+  - Eliminated the Gradio queue bridging entirely; Flask now directly calls the synchronous `submit_function()`.
+  - Replaced `time.time()` based Job IDs with `uuid.uuid4()` to avoid 1-second resolution collisions.
+  - Flask `/process` endpoint now reads the saved result image and returns a base64 encoded string (`data:image/png;base64,...`) so the web frontend can directly render the image.
+  - Cleaned up unused CLI arguments (`--repaint`, `--allow_tf32`, `--local_rank`), an orphaned `received_images` folder at the project root, and removed an obsolete `gradio_client` monkeypatch. **(Correction: the monkeypatch was NOT obsolete — see #10.)**
+
+### 10. Regression: removing the `gradio_client` monkeypatch (#9) re-broke the Gradio root page
+- **Problem**: the cleanup in #9 removed the bool-schema monkeypatch from #4 as "obsolete". It wasn't — the upstream bug in `gradio_client==1.3.0` is still present (it's pinned exactly by gradio 4.x), and every load of the Gradio UI 500'd again with `TypeError: argument of type 'bool' is not iterable`. The Flask `/process` endpoint was unaffected (separate server), which can make the app look "half working".
+- **Fix**: restored the monkeypatch in `app.py` (wrapping `get_type` and `_json_schema_to_python_type` to return `"Any"` for bool schema nodes), verified against the exact failing schema shape (`additionalProperties: true`).
+- **Takeaway**: this patch must stay until `gradio`/`gradio_client` are upgraded to a version with the upstream fix — do not remove it as dead code again.
+
+### 11. Implemented Asynchronous Webhook Architecture with Static Hosting
+- **Problem**: The frontend faced timeout issues waiting for the long AI generation process to complete. Sending the massive base64 image over Localtunnel proxy also triggered `408 Request Timeout` limits on the proxy layer and Express body parser limits.
+- **Fix**: Re-architected the app to use an asynchronous two-way webhook model with static file serving:
+  - Added a `POST /register` endpoint for the frontend to perform a handshake and register its own `localtunnel` URL.
+  - Added a `GET /images/<filename>` endpoint to publicly host generated images statically from the `received_images` folder.
+  - Modified `POST /process` to immediately return `HTTP 202 Accepted` and spawn a background thread for image generation.
+  - The background worker actively sends a tiny `POST` request back to the registered webhook URL containing just the filename (`generatedImageName`), avoiding all base64 size limits.
+  - *Update*: Increased the webhook delivery retry logic from 3 attempts to 10 attempts (with 2-second delays) to provide more resilience against transient network drops.
+
 ### Debugging notes / gotchas hit along the way
 - Background process output is fully buffered when redirected to a file — always launch with `python -u` or you won't see logs until the process exits.
 - When a background process silently dies, `ps aux | grep` returning nothing is the tell — don't assume "still downloading" just because the last known state was mid-download.
@@ -70,7 +96,7 @@ Living document for this project. Issues/fixes are a log of what's already been 
 *(open roadmap — fill in / reorder as needed)*
 
 - [ ] Decide the actual deployment architecture (see note below — the client/Macbook/friend's-laptop diagram had unresolved design issues)
-- [ ] Wire up the web frontend to actually call this local CatVTON instance
+- [x] Wire up the web frontend to actually call this local CatVTON instance (Implemented via async two-way webhook bridge)
 - [ ] Persist/clean up generated images (`output/` dir, storage policy)
 - [ ] Address `torch.load(weights_only=False)` FutureWarning on the SCHP checkpoint before PyTorch flips that default (add the checkpoint class to `torch.serialization.add_safe_globals`, or pin torch)
 - [ ] Decide on GPU/hosting story for real usage — MPS locally is fine for dev/testing, but 384×512 is a reduced resolution and a Mac won't be a real production inference target

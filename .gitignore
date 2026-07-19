@@ -18,6 +18,8 @@ CatVTON/Models/
 CatVTON/Datasets/
 CatVTON/resource/demo/output/
 CatVTON/playground.py
+CatVTON/received_images/
+CatVTON/registered_webhook.txt
 
 # Env files
 .env
