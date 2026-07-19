@@ -404,8 +404,24 @@ def process_and_send(client_path, clothing_path, clothing_id, job_id, webhook_ur
             except:
                 pass
 
+def cleanup_old_files():
+    """Deletes files in UPLOAD_FOLDER that are older than 5 minutes to prevent the folder from growing indefinitely."""
+    now = time.time()
+    try:
+        for filename in os.listdir(UPLOAD_FOLDER):
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            if os.path.isfile(file_path):
+                if os.stat(file_path).st_mtime < now - 300: # 5 minutes
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
+    except Exception as e:
+        print(f"⚠️ Error during cleanup: {e}")
+
 @flask_app.route('/process', methods=['POST'])
 def process_image():
+    cleanup_old_files()
     print("\n--- New Request Received! ---")
     print(f"Files received: {list(request.files.keys())}")
     print(f"Form data received: {list(request.form.keys())}")

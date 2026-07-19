@@ -82,6 +82,7 @@ Living document for this project. Issues/fixes are a log of what's already been 
   - Modified `POST /process` to immediately return `HTTP 202 Accepted` and spawn a background thread for image generation.
   - The background worker actively sends a tiny `POST` request back to the registered webhook URL containing just the filename (`generatedImageName`), avoiding all base64 size limits.
   - *Update*: Increased the webhook delivery retry logic from 3 attempts to 10 attempts (with 2-second delays) to provide more resilience against transient network drops.
+  - *Update*: Added a `cleanup_old_files()` routine that runs automatically on every `/process` request. It safely deletes files in `received_images/` older than 5 minutes to prevent the folder from filling up the hard drive, while ensuring concurrent client downloads aren't interrupted.
 
 ### Debugging notes / gotchas hit along the way
 - Background process output is fully buffered when redirected to a file — always launch with `python -u` or you won't see logs until the process exits.
